@@ -6,18 +6,11 @@ import wave
 import numpy as np
 import sounddevice as sd
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 import openai
+import pyttsx3
 from scipy.io.wavfile import write
 from dotenv import load_dotenv
-import asyncio
-from queue import Queue
-import edge_tts
-import pyttsx3
-import re
-
-# Import our streaming TTS runner.
-# from streaming_voice import stream_gpt4_and_speak
 
 # Load environment variables and OpenAI API key.
 load_dotenv()
@@ -31,21 +24,26 @@ CHANNELS = 1
 DTYPE = 'int16'
 BLOCK_SIZE = 1024  # samples per block
 
-# Global recording state and buffer.
+# Global variables to hold recording state.
 recording_active = False
-audio_buffer = []  # List of NumPy arrays (each block)
-latest_amplitude = 0.0  # Used for waveform display
+audio_buffer = []   # list of NumPy arrays (each block)
+latest_amplitude = 0.0  # used for waveform display
 
 # Lock for thread-safe updates.
-import threading
 buffer_lock = threading.Lock()
 
-# sounddevice callback: append incoming audio block and update amplitude.
+# Initialize pyttsx3 TTS engine (will be used later in a worker thread).
+tts_engine = pyttsx3.init()
+tts_engine.setProperty("rate", 150)
+tts_engine.setProperty("volume", 1.0)
+
+# Sounddevice callback: append each incoming audio block and update amplitude.
 def audio_callback(indata, frames, time_info, status):
     global audio_buffer, latest_amplitude
     if recording_active:
         with buffer_lock:
             audio_buffer.append(indata.copy())
+        # Update latest amplitude as the mean absolute value.
         latest_amplitude = np.abs(indata).mean()
 
 # Function to start recording.
@@ -54,8 +52,9 @@ def start_recording():
     recording_active = True
     with buffer_lock:
         audio_buffer = []  # clear previous recording
-    stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, dtype=DTYPE,
-                            blocksize=BLOCK_SIZE, callback=audio_callback)
+    stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS,
+                            dtype=DTYPE, blocksize=BLOCK_SIZE,
+                            callback=audio_callback)
     stream.start()
     return stream
 
@@ -66,7 +65,7 @@ def stop_recording(stream):
     stream.stop()
     stream.close()
 
-# Save accumulated audio to a temporary WAV file.
+# Save recorded audio to a temporary WAV file.
 def save_audio_to_wav():
     with buffer_lock:
         if not audio_buffer:
@@ -76,25 +75,44 @@ def save_audio_to_wav():
         wav_path = f.name
     with wave.open(wav_path, "wb") as wf:
         wf.setnchannels(CHANNELS)
-        wf.setsampwidth(2)  # 16-bit PCM = 2 bytes per sample.
+        wf.setsampwidth(2)  # 16-bit PCM: 2 bytes per sample.
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(data.tobytes())
     return wav_path
 
-# Transcribe audio using OpenAI Whisper.
+# Function to transcribe audio using OpenAI Whisper.
 def transcribe_audio(wav_path):
     with open(wav_path, "rb") as audio_file:
         transcript = openai.Audio.transcribe("whisper-1", audio_file)
     return transcript["text"].strip()
+
+# Function to call GPT-4 with transcribed text.
+def get_gpt4_response(command_text):
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": command_text}],
+        max_tokens=150
+    )
+    return response.choices[0].message.content.strip()
+
+# Function to speak response using pyttsx3.
+def speak_response(response_text):
+    # This function will run in a worker thread so that TTS doesn't block the GUI.
+    try:
+        tts_engine.say(response_text)
+        tts_engine.runAndWait()
+    except Exception as e:
+        print("TTS error:", e)
 
 # Tkinter-based GUI application.
 class VoiceAssistantApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Voice Assistant")
-        self.geometry("500x350")
+        self.geometry("500x300")
         self.resizable(False, False)
         
+        # Status label.
         self.status_var = tk.StringVar(value="Click 'Start Recording' to begin.")
         self.status_label = ttk.Label(self, textvariable=self.status_var, font=("Helvetica", 12))
         self.status_label.pack(pady=10)
@@ -103,23 +121,30 @@ class VoiceAssistantApp(tk.Tk):
         self.canvas = tk.Canvas(self, width=400, height=100, bg="black")
         self.canvas.pack(pady=10)
         
+        # Buttons.
         button_frame = ttk.Frame(self)
         button_frame.pack(pady=10)
         self.start_button = ttk.Button(button_frame, text="Start Recording", command=self.start_recording_handler)
         self.start_button.grid(row=0, column=0, padx=10)
-        self.stop_button = ttk.Button(button_frame, text="Stop Recording & Submit", command=self.stop_and_process_handler)
+        self.stop_button = ttk.Button(button_frame, text="Stop Recording & Process", command=self.stop_and_process_handler)
         self.stop_button.grid(row=0, column=1, padx=10)
+        
         self.exit_button = ttk.Button(self, text="Exit", command=self.destroy)
         self.exit_button.pack(pady=10)
         
+        # Recording stream placeholder.
         self.rec_stream = None
+        
+        # Schedule waveform update.
         self.update_waveform()
         
     def update_waveform(self):
+        # Update a simple waveform indicator on the canvas based on latest_amplitude.
         self.canvas.delete("all")
-        # Scale the amplitude (max for 16-bit is ~32767) to canvas width 400.
+        # Scale amplitude (max for 16-bit is ~32767) to canvas width (400).
         bar_width = int((latest_amplitude / 32767) * 400)
         self.canvas.create_rectangle(0, 0, bar_width, 100, fill="green")
+        # Schedule next update.
         self.after(50, self.update_waveform)
         
     def start_recording_handler(self):
@@ -131,16 +156,19 @@ class VoiceAssistantApp(tk.Tk):
     def stop_and_process_handler(self):
         if recording_active and self.rec_stream is not None:
             stop_recording(self.rec_stream)
-            self.status_var.set("Recording stopped. Processing audio...")
+            self.status_var.set("Recording stopped. Processing...")
+            # Process the recording in a separate thread.
             threading.Thread(target=self.process_recording, daemon=True).start()
         else:
             self.status_var.set("No recording in progress.")
+    
     def process_recording(self):
         wav_path = save_audio_to_wav()
         if not wav_path:
             self.status_var.set("No audio recorded. Please try again.")
             return
         
+        # Transcribe the audio.
         self.status_var.set("Transcribing audio...")
         try:
             transcribed_text = transcribe_audio(wav_path)
@@ -149,75 +177,21 @@ class VoiceAssistantApp(tk.Tk):
             os.remove(wav_path)
             return
         
-        self.status_var.set("Generating response...")
-        
-        def on_sentence(sentence):
-            self.status_var.set(f"Speaking: {sentence}")
-            
+        # Get GPT-4 response.
+        self.status_var.set("Getting response from GPT-4...")
         try:
-            threading.Thread(
-                target=stream_gpt4_response,
-                args=(transcribed_text, on_sentence),
-                daemon=True
-            ).start()
+            response_text = get_gpt4_response(transcribed_text)
         except Exception as e:
-            self.status_var.set(f"Error: {e}")
+            self.status_var.set(f"GPT-4 error: {e}")
+            os.remove(wav_path)
+            return
         
+        # Speak the response.
+        self.status_var.set("Speaking the response...")
+        threading.Thread(target=speak_response, args=(response_text,), daemon=True).start()
+        self.status_var.set("Done.")
+        # Clean up.
         os.remove(wav_path)
-
-# Global TTS engine setup
-tts_engine = pyttsx3.init()
-tts_engine.setProperty("rate", 180)
-tts_engine.setProperty("voice", "english")  # Force English voice
-
-# Thread-safe queue for sentences
-tts_queue = Queue()
-is_speaking = False
-
-def tts_worker():
-    global is_speaking
-    while True:
-        text = tts_queue.get()
-        if text is None:
-            break
-        is_speaking = True
-        try:
-            tts_engine.say(text)
-            tts_engine.runAndWait()
-        except Exception as e:
-            print(f"TTS Error: {e}")
-        is_speaking = False
-
-# Start TTS thread
-tts_thread = threading.Thread(target=tts_worker, daemon=True)
-tts_thread.start()
-
-# Modify the stream_gpt4_response function
-def stream_gpt4_response(command_text, callback):
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": command_text}],
-        max_tokens=1000,
-        stream=True
-    )
-    buffer = ""
-    for chunk in response:
-        if content := chunk.choices[0].delta.get("content", ""):
-            buffer += content
-            # Split on sentence boundaries
-            while True:
-                match = re.search(r'[.!?]\s+', buffer)
-                if not match:
-                    break
-                split_pos = match.end()
-                sentence = buffer[:split_pos].strip()
-                if sentence:
-                    callback(sentence)
-                    tts_queue.put(sentence)  # Directly add to queue
-                buffer = buffer[split_pos:]
-    if buffer.strip():
-        callback(buffer)
-        tts_queue.put(buffer)
 
 if __name__ == "__main__":
     app = VoiceAssistantApp()

@@ -22,3 +22,4 @@ wave
 requests
 gtts
 gspread
+pyttsx3
