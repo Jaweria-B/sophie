@@ -19,7 +19,7 @@ import pyttsx3
 import re
 
 # Import our streaming TTS runner.
-from junk.streaming_voice import stream_gpt4_response
+from streaming_voice import stream_gpt4_response
 from junk.transcriber import RealTimeTranscriber
 
 # Load environment variables and OpenAI API key.

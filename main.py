@@ -1,4 +1,4 @@
-# sentence streaming added
+# sentence streaming, real-time transcription added
 
 import os
 import time
