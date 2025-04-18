@@ -1,25 +1,37 @@
-deepgram-sdk
-playsound==1.2.2
-langchain-groq
-langchain_google_genai
-langchain_chroma
-chromadb
-Pillow
-pyperclip
-pyaudio
+# Core dependencies
+openai==0.28.0
 python-dotenv
+numpy
+scipy
+sounddevice
+edge-tts
+pyttsx3
+
+# Audio & Speech
+playsound==1.2.2
+PyAudio
+pvporcupine
+gtts
+
+# Language & AI
+langchain-chroma
+langchain-groq
+langchain-google-genai
+chromadb
 instructor
 pydantic
-colorama
-tavily-python
+
+# Utilities & API Clients
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
 google-api-python-client
-openai==0.28.0
-pvporcupine
-wave
-requests
-gtts
 gspread
-pyttsx3
+requests
+pyperclip
+colorama
+tavily-python
+
+# Web UI (optional)
+streamlit
+streamlit-webrtc
