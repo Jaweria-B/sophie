@@ -18,7 +18,10 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 # Run: pip install openai==0.28.0
 
 # Initialize the agent with the OpenAI model (e.g., "gpt-4")
-agent = Agent(name="OpenAI-Agent", model="gpt-4", system_prompt=assistant_prompt)
+# agent = Agent(name="OpenAI-Agent", model="gpt-4", system_prompt=assistant_prompt)
+# Change to:
+agent = Agent(name="OpenAI-Agent", model="gpt-4o-mini", system_prompt=assistant_prompt)
+
 
 # Set wake word configuration
 WAKE_WORD = "Hi Sophie"
@@ -85,8 +88,12 @@ def transcribe_command(audio_filename):
     Note: This function requires openai==0.28.0.
     """
     with open(audio_filename, "rb") as audio_file:
-        print("Transcribing command using OpenAI Whisper...")
-        transcript = openai.Audio.transcribe("whisper-1", audio_file)
+        print("Transcribing command using OpenAI gpt-4o-mini-transcribe...")
+        # Old:
+        # transcript = openai.Audio.transcribe("whisper-1", audio_file)
+        # New:
+        transcript = openai.Audio.transcribe("gpt-4o-mini-transcribe", audio_file)
+
     return transcript["text"]
 
 def main():

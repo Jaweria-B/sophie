@@ -38,7 +38,10 @@ def answer_query(question: str) -> str:
     ]
     # Call the OpenAI Chat API
     response = openai.ChatCompletion.create(
-         model="gpt-4",
+         # Old
+         # model="gpt-4",
+         # New
+         model="gpt-4o-mini",
          messages=messages,
          temperature=0.1,
     )

@@ -19,7 +19,7 @@ import pyttsx3
 import re
 
 # Import our streaming TTS runner.
-from junk.streaming_voice import stream_gpt4_response
+from streaming_voice import stream_gpt4_response
 
 # Load environment variables and OpenAI API key.
 load_dotenv()
@@ -86,7 +86,10 @@ def save_audio_to_wav():
 # Transcribe audio using OpenAI Whisper.
 def transcribe_audio(wav_path):
     with open(wav_path, "rb") as audio_file:
-        transcript = openai.Audio.transcribe("whisper-1", audio_file)
+        # Old
+        # transcript = openai.Audio.transcribe("whisper-1", audio_file)
+        # New
+        transcript = openai.Audio.transcribe("gpt-4o-mini-transcribe", audio_file)
     return transcript["text"].strip()
 
 # Tkinter-based GUI application.

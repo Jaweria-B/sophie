@@ -35,7 +35,10 @@ tts_thread.start()
 # Modify the stream_gpt4_response function
 def stream_gpt4_response(command_text, callback):
     response = openai.ChatCompletion.create(
-        model="gpt-4",
+        # Old
+        # model="gpt-4",
+        # New
+        model="gpt-4o-mini",
         messages=[{"role": "user", "content": command_text}],
         max_tokens=1000,
         stream=True
