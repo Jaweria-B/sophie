@@ -3,7 +3,7 @@ import time
 import wave
 import tempfile
 import numpy as np
-import streamlit as st
+import junk.streamlit as st
 from dotenv import load_dotenv
 import openai
 import pyttsx3

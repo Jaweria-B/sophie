@@ -19,8 +19,7 @@ import pyttsx3
 import re
 
 # Import our streaming TTS runner.
-from streaming_voice import stream_gpt4_response
-from transcriber import RealTimeTranscriber
+from junk.streaming_voice import stream_gpt4_response
 
 # Load environment variables and OpenAI API key.
 load_dotenv()
@@ -43,10 +42,6 @@ latest_amplitude = 0.0  # Used for waveform display
 import threading
 buffer_lock = threading.Lock()
 
-
-# Create global transcriber instance
-transcriber = RealTimeTranscriber()
-
 # sounddevice callback: append incoming audio block and update amplitude.
 def audio_callback(indata, frames, time_info, status):
     global audio_buffer, latest_amplitude
@@ -54,9 +49,6 @@ def audio_callback(indata, frames, time_info, status):
         with buffer_lock:
             audio_buffer.append(indata.copy())
         latest_amplitude = np.abs(indata).mean()
-
-        # Stream to transcriber (chunk by chunk)
-        transcriber.add_audio_chunk(indata, SAMPLE_RATE)
 
 # Function to start recording.
 def start_recording():
@@ -101,6 +93,10 @@ def transcribe_audio(wav_path):
 class VoiceAssistantApp(tk.Tk):
     def __init__(self):
         super().__init__()
+        self.processed_audio_index = 0  # Track processed audio chunks
+        self.transcription = ""         # Accumulated transcription
+        self.transcribing_active = False
+
         self.title("Voice Assistant")
         self.geometry("500x350")
         self.resizable(False, False)
@@ -135,29 +131,80 @@ class VoiceAssistantApp(tk.Tk):
     def start_recording_handler(self):
         global recording_active
         if not recording_active:
-            self.status_var.set("Recording... Please speak your command.")
+            # Reset transcription state
+            self.processed_audio_index = 0
+            self.transcription = ""
+            self.transcribing_active = True
+            
+            self.status_var.set("Recording... Speak now!")
             self.rec_stream = start_recording()
-    
+            # Start real-time transcription
+            threading.Thread(target=self.realtime_transcription_loop, daemon=True).start()
+
+    # In realtime_transcription_loop method:
+    def realtime_transcription_loop(self):
+        while recording_active and self.transcribing_active:
+            time.sleep(1)
+            with buffer_lock:
+                current_audio = audio_buffer[self.processed_audio_index:]
+                if not current_audio:
+                    continue
+                data = np.concatenate(current_audio, axis=0)
+            
+            # Create temp file with manual cleanup
+            temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            wav_path = temp_file.name
+            temp_file.close()  # Release handle immediately
+            
+            try:
+                write(wav_path, SAMPLE_RATE, data)
+                chunk_text = transcribe_audio(wav_path)
+                self.transcription += chunk_text + " "
+                self.status_var.set(f"Real-time: {self.transcription}")
+                self.processed_audio_index += len(current_audio)
+            except Exception as e:
+                print(f"Chunk error: {e}")
+            finally:
+                os.remove(wav_path)  # Clean up manually
+
+    # In stop_and_process_handler:
     def stop_and_process_handler(self):
         if recording_active and self.rec_stream is not None:
+            self.transcribing_active = False
             stop_recording(self.rec_stream)
-            self.status_var.set("Recording stopped. Processing audio...")
+            
+            with buffer_lock:
+                current_audio = audio_buffer[self.processed_audio_index:]
+                if current_audio:
+                    data = np.concatenate(current_audio, axis=0)
+                    temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+                    wav_path = temp_file.name
+                    temp_file.close()
+                    
+                    try:
+                        write(wav_path, SAMPLE_RATE, data)
+                        self.transcription += transcribe_audio(wav_path)
+                    finally:
+                        os.remove(wav_path)
+            
+            self.status_var.set("Processing final response...")
             threading.Thread(target=self.process_recording, daemon=True).start()
-        else:
-            self.status_var.set("No recording in progress.")
-    def process_recording(self):
-        # Get the transcription already streamed during recording
-        transcribed_text = transcriber.get_current_transcription()
-        if not transcribed_text:
-            self.status_var.set("No speech detected. Please try again.")
-            return
-        
-        transcriber.reset()  # Clear for next session
-        self.status_var.set("Generating response...")
 
+    def process_recording(self):
+        # wav_path = save_audio_to_wav()
+        # Use real-time accumulated transcription
+        transcribed_text = self.transcription.strip()
+        
+        if not transcribed_text:
+            self.status_var.set("No speech detected")
+            return
+
+        # Generate response with existing code
+        self.status_var.set("Generating response...")
+        
         def on_sentence(sentence):
             self.status_var.set(f"Speaking: {sentence}")
-        
+            
         try:
             threading.Thread(
                 target=stream_gpt4_response,
@@ -166,17 +213,9 @@ class VoiceAssistantApp(tk.Tk):
             ).start()
         except Exception as e:
             self.status_var.set(f"Error: {e}")
-
         
         # os.remove(wav_path)
         
 if __name__ == "__main__":
     app = VoiceAssistantApp()
-    def on_closing():
-        transcriber.stop()
-        app.destroy()
-
-    app.protocol("WM_DELETE_WINDOW", on_closing)
     app.mainloop()
-
-    # app.mainloop()
